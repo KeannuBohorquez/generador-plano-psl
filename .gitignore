@@ -1,0 +1,46 @@
+# =============================================================
+#  .gitignore — Generador Archivo Plano PSL
+# =============================================================
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+build_tmp/
+.eggs/
+.venv/
+venv/
+env/
+.env
+
+# ── PyInstaller ───────────────────────────────────────────────
+*.spec
+dist/
+build_tmp/
+
+# ── Datos sensibles (NUNCA subir al repo) ────────────────────
+*.pdf
+*.xls
+*.xlsx
+*.xlsm
+finales/
+enero/finales/
+
+# ── IDEs ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+Thumbs.db
+.DS_Store
+
+# ── Logs y temporales ─────────────────────────────────────────
+*.log
+*.tmp
+*.bak

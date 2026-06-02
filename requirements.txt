@@ -1,0 +1,8 @@
+# Generador Archivo Plano PSL — Dependencias
+# Instalar con:  pip install -r requirements.txt
+
+pdfplumber>=0.10.0       # Lectura de PDFs bancarios
+msoffcrypto-tool>=5.0.0  # Desencriptado de Excel protegidos
+openpyxl>=3.1.0          # Lectura/escritura de .xlsx
+xlrd>=2.0.1              # Lectura de .xls (formato antiguo)
+pandas>=2.0.0            # Manipulacion de datos tabulares
