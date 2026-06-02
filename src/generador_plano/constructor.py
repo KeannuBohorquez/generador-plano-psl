@@ -14,7 +14,7 @@ from .config import (
     COMPANIA, DIVISION, CENTRO, FUENTE, MONEDA, ORIGEN,
     NIT_BANCOLOMBIA,
     CTA_COMISIONES, CTA_GMF, CTA_IVA_COMISION,
-    CTA_PROPIETARIOS, CTA_PEND_IDENTIF,
+    CTA_PROPIETARIOS, CTA_PEND_IDENTIF, CTA_FALTANTE,
     CTA_BANCO_CTE, CTA_FIDUCIA,
     NOMBRES_MES_CORTO, NOMBRES_MES_LARGO,
 )
@@ -45,6 +45,8 @@ class ResultadoPlano:
     diferencia_calc: float
     traslado_neto: float
     n_propietarios: int
+    dinero_faltante: float = 0.0          # recaudo - propietarios - sin_conciliar
+    indices_faltante: list[int] = field(default_factory=list)  # indices de filas faltante en Excel
     advertencias: list[str] = field(default_factory=list)
 
 
@@ -94,11 +96,12 @@ def construir_filas(
 
     # ── Comentarios ───────────────────────────────────────────
     cm = {
-        "gastos":   f"GASTOS BANCARIOS DEL MES DE {mes_nom} {anio}",
-        "aportes":  f"APORTE MES DE {mes_nom} {anio}",
-        "banco":    f"GASTOS BANCARIOS Y APORTES MES DE {mes_nom} {anio}",
-        "traslado": f"TRASLADO DE LA CTA CTE A LA FIDUCIARIA BANCOLOMBIA DE {mes_nom} {anio}",
-        "pend":     f"RECAUDOS PENDIENTES POR IDENTIFICAR DE {mes_nom} {anio}",
+        "gastos":    f"GASTOS BANCARIOS DEL MES DE {mes_nom} {anio}",
+        "aportes":   f"APORTE MES DE {mes_nom} {anio}",
+        "banco":     f"GASTOS BANCARIOS Y APORTES MES DE {mes_nom} {anio}",
+        "traslado":  f"TRASLADO DE LA CTA CTE A LA FIDUCIARIA BANCOLOMBIA DE {mes_nom} {anio}",
+        "pend":      f"RECAUDOS PENDIENTES POR IDENTIFICAR DE {mes_nom} {anio}",
+        "faltante":  f"*** DINERO FALTANTE POR IDENTIFICAR DE {mes_nom} {anio} ***",
     }
 
     # ── Funcion auxiliar de fila ──────────────────────────────
@@ -148,6 +151,26 @@ def construir_filas(
     if recaudos_pend > 0:
         filas.append(fila("2", CTA_PEND_IDENTIF, NIT_BANCOLOMBIA, recaudos_pend, cm["pend"]))
 
+    # ── Dinero faltante ───────────────────────────────────────
+    # Falta dinero cuando el recaudo del extracto supera la suma
+    # de todos los movimientos conocidos (conciliados + sin conciliar).
+    prop_total     = float(df_prop["Valor"].sum())
+    dinero_faltante = recaudo - prop_total - recaudos_pend
+    indices_faltante: list[int] = []
+
+    if dinero_faltante > 1:   # tolerancia de $1 por redondeo
+        advertencias.append(
+            f"DINERO FALTANTE: ${dinero_faltante:,.2f} — "
+            f"El recaudo del extracto (${recaudo:,.2f}) es mayor que "
+            f"la suma de aportes propietarios (${prop_total:,.2f}) "
+            f"mas recaudos pendientes (${recaudos_pend:,.2f})."
+        )
+        # Se agrega fila al plano para que quede registrado en PSL
+        idx = len(filas)   # posicion base 0 (en Excel = idx+2 por encabezado)
+        filas.append(fila("2", CTA_FALTANTE, NIT_BANCOLOMBIA,
+                          dinero_faltante, cm["faltante"]))
+        indices_faltante.append(idx)
+
     # ── Debito banco neto ─────────────────────────────────────
     filas.append(fila("1", CTA_BANCO_CTE, "0", db_banco, cm["banco"]))
 
@@ -161,10 +184,12 @@ def construir_filas(
         recaudo=recaudo,
         gastos=total_gastos,
         db_banco=db_banco,
-        propietarios_total=float(df_prop["Valor"].sum()),
+        propietarios_total=prop_total,
         recaudos_pend=recaudos_pend,
         diferencia_calc=diferencia_calc,
         traslado_neto=traslado_neto,
         n_propietarios=len(df_prop),
+        dinero_faltante=dinero_faltante,
+        indices_faltante=indices_faltante,
         advertencias=advertencias,
     )

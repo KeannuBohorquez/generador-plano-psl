@@ -21,6 +21,7 @@ CTA_GMF          = "51159501"   # Gravamen al movimiento financiero (4x1000)
 CTA_IVA_COMISION = "53050801"   # IVA sobre comisiones
 CTA_PROPIETARIOS = "28051501"   # Aportes propietarios identificados
 CTA_PEND_IDENTIF = "28051502"   # Recaudos pendientes por identificar
+CTA_FALTANTE     = "28051502"   # Dinero faltante por identificar (ajustar si hay cuenta especifica)
 CTA_BANCO_CTE    = "11100607"   # Cuenta corriente banco
 CTA_FIDUCIA      = "11253301"   # Cuenta fiduciaria
 

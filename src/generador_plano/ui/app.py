@@ -210,13 +210,16 @@ class App(tk.Tk):
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
 
-        self.log.tag_config("ok",   foreground="#3FB950")
-        self.log.tag_config("err",  foreground="#F85149")
-        self.log.tag_config("warn", foreground="#E3B341")
-        self.log.tag_config("info", foreground="#79C0FF")
-        self.log.tag_config("head", foreground="#E3B341", font=("Consolas", 9, "bold"))
-        self.log.tag_config("dim",  foreground="#8B949E")
-        self.log.tag_config("val",  foreground="#D2A8FF")
+        self.log.tag_config("ok",       foreground="#3FB950")
+        self.log.tag_config("err",      foreground="#F85149")
+        self.log.tag_config("warn",     foreground="#E3B341")
+        self.log.tag_config("info",     foreground="#79C0FF")
+        self.log.tag_config("head",     foreground="#E3B341", font=("Consolas", 9, "bold"))
+        self.log.tag_config("dim",      foreground="#8B949E")
+        self.log.tag_config("val",      foreground="#D2A8FF")
+        self.log.tag_config("faltante", foreground="#FF0000",
+                            font=("Consolas", 9, "bold"),
+                            background="#2D0000")
 
     # ── Helpers de UI ─────────────────────────────────────────
 
@@ -383,8 +386,23 @@ class App(tk.Tk):
             for adv in resultado.advertencias:
                 L(f"\n  AVISO: {adv}", "warn")
 
+            # ── Alerta de dinero faltante ─────────────────────
+            if resultado.dinero_faltante > 1:
+                L("\n" + "!" * 54, "faltante")
+                L("  *** ALERTA: DINERO FALTANTE ***", "faltante")
+                L("!" * 54, "faltante")
+                L(f"  Monto faltante:  ${resultado.dinero_faltante:>18,.2f}", "faltante")
+                L(f"  Recaudo extracto:  ${resultado.recaudo:>16,.2f}", "faltante")
+                L(f"  Aportes identif.:  ${resultado.propietarios_total:>16,.2f}", "faltante")
+                L(f"  Sin conciliar:     ${resultado.recaudos_pend:>16,.2f}", "faltante")
+                L(f"  Diferencia:        ${resultado.dinero_faltante:>16,.2f}", "faltante")
+                L("!" * 54, "faltante")
+                L("  La fila DINERO FALTANTE fue agregada al archivo plano", "faltante")
+                L("  en ROJO para que quede visible en PSL.", "faltante")
+
             try:
-                exportar_excel(resultado.filas, salida)
+                exportar_excel(resultado.filas, salida,
+                               indices_faltante=resultado.indices_faltante)
             except PermissionError:
                 L("\n  ERROR: No se pudo guardar el archivo.", "err")
                 L("  Cierra el archivo si esta abierto en Excel.", "err")
@@ -406,6 +424,8 @@ class App(tk.Tk):
                 L(f"  {'Sin conciliar (archivo)':<34}  ${r.recaudos_pend:>14,.2f}", "warn")
                 if abs(r.recaudos_pend - r.diferencia_calc) > 1:
                     L(f"  {'  dif. calculada':<34}  ${r.diferencia_calc:>14,.2f}", "dim")
+            if r.dinero_faltante > 1:
+                L(f"  {'*** DINERO FALTANTE ***':<34}  ${r.dinero_faltante:>14,.2f}", "faltante")
             L(f"  {'DB banco (neto)':<34}  ${r.db_banco:>14,.2f}", "")
             L(f"  {'Traslado fiducia':<34}  ${r.traslado_neto:>14,.2f}", "")
             L(f"  {'N propietarios':<34}  {r.n_propietarios:>15}", "")
@@ -413,17 +433,36 @@ class App(tk.Tk):
             if not n_comp:
                 L("\n  RECUERDA asignar el N de comprobante en PSL", "warn")
 
-            self._set_status(
-                f"Listo  |  {len(r.filas)} filas  |  {r.n_propietarios} propietarios  |  {Path(salida).name}",
-                COLOR_GREEN,
+            hay_faltante = r.dinero_faltante > 1
+            status_color = "#C0392B" if hay_faltante else COLOR_GREEN
+            status_msg   = (
+                f"ALERTA: DINERO FALTANTE ${r.dinero_faltante:,.0f}  |  {Path(salida).name}"
+                if hay_faltante else
+                f"Listo  |  {len(r.filas)} filas  |  {r.n_propietarios} propietarios  |  {Path(salida).name}"
             )
-            n_filas = len(r.filas)
-            n_prop  = r.n_propietarios
-            self.after(0, lambda s=salida, n=n_filas, p=n_prop: messagebox.showinfo(
-                "Exito",
-                f"Archivo generado correctamente.\n\n"
-                f"Filas: {n}\nPropietarios: {p}\n\n{s}",
-            ))
+            self._set_status(status_msg, status_color)
+
+            n_filas   = len(r.filas)
+            n_prop    = r.n_propietarios
+            faltante  = r.dinero_faltante
+
+            if hay_faltante:
+                self.after(0, lambda s=salida, n=n_filas, p=n_prop, f=faltante:
+                    messagebox.showwarning(
+                        "ALERTA - Dinero Faltante",
+                        f"El archivo fue generado pero hay DINERO FALTANTE.\n\n"
+                        f"Monto faltante:  ${f:,.2f}\n\n"
+                        f"Se agrego una fila en ROJO al archivo plano con el comentario:\n"
+                        f"'*** DINERO FALTANTE POR IDENTIFICAR ***'\n\n"
+                        f"Revisa el extracto bancario para identificar los movimientos faltantes.\n\n"
+                        f"Archivo: {s}\nFilas: {n}  |  Propietarios: {p}",
+                    ))
+            else:
+                self.after(0, lambda s=salida, n=n_filas, p=n_prop: messagebox.showinfo(
+                    "Exito",
+                    f"Archivo generado correctamente.\n\n"
+                    f"Filas: {n}\nPropietarios: {p}\n\n{s}",
+                ))
 
         except Exception as ex:
             msg = str(ex)
