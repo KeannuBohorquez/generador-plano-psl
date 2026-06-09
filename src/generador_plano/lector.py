@@ -31,13 +31,17 @@ def _desencriptar(ruta: str, pwd: str) -> io.BytesIO:
         return open(ruta, "rb")
 
 
-def _leer_excel(ruta: str, pwd: str | None = None) -> pd.DataFrame:
+def _leer_excel(ruta: str, pwd: str | None = None, header: int = 0) -> pd.DataFrame:
     """
     Lee un Excel en cualquier formato soportado:
       - .xlsx  (openpyxl)
       - .xls   (xlrd)
       - .xlsx encriptado (msoffcrypto → openpyxl)
       - .xls encriptado / OLE2 (msoffcrypto → xlrd)
+
+    Args:
+        header: Indice de la fila que contiene los encabezados (0-based).
+                El archivo sin conciliar de PSL usa header=2 (fila 3).
 
     Raises:
         ValueError: Si ninguna estrategia logra abrir el archivo.
@@ -52,7 +56,7 @@ def _leer_excel(ruta: str, pwd: str | None = None) -> pd.DataFrame:
                     buf = io.BytesIO()
                     of.decrypt(buf)
                     buf.seek(0)
-                    return pd.read_excel(buf, header=0, engine="openpyxl")
+                    return pd.read_excel(buf, header=header, engine="openpyxl")
         except ValueError:
             raise
         except Exception:
@@ -60,13 +64,13 @@ def _leer_excel(ruta: str, pwd: str | None = None) -> pd.DataFrame:
 
     # 2. Intentar openpyxl directo (.xlsx sin contrasena)
     try:
-        return pd.read_excel(ruta, header=0, engine="openpyxl")
+        return pd.read_excel(ruta, header=header, engine="openpyxl")
     except Exception:
         pass
 
     # 3. Fallback xlrd (.xls o formatos antiguos)
     try:
-        return pd.read_excel(ruta, header=0, engine="xlrd")
+        return pd.read_excel(ruta, header=header, engine="xlrd")
     except Exception as e:
         raise ValueError(
             f"No se pudo leer el archivo '{ruta}'.\n"
@@ -146,9 +150,12 @@ def leer_sin_conciliar(
     Returns:
         Tupla (total_mes, n_registros).
     """
-    df = _leer_excel(ruta, pwd=pwd)
+    # El reporte PSL "Movimiento sin conciliar" tiene 2 filas de titulo
+    # antes de los encabezados reales (fila 1 = titulo, fila 2 = vacia,
+    # fila 3 = encabezados reales → header=2 en pandas base-0).
+    df = _leer_excel(ruta, pwd=pwd, header=2)
 
-    # Buscar columna de fecha: preferir "Fecha Banco"
+    # Buscar columna de fecha: preferir "Fecha en Banco" / "Fecha Banco"
     date_col = None
     for col in df.columns:
         if "fecha" in str(col).lower() and "banco" in str(col).lower():
