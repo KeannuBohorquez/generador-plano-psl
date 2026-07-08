@@ -22,11 +22,20 @@ FONT_MONO  = ("Consolas", 9)
 FONT_BTN   = ("Segoe UI", 10, "bold")
 FONT_TITLE = ("Segoe UI", 13, "bold")
 
-# Carpeta base: junto al .exe si esta compilado, o junto a main.py
+# Carpeta base: junto al .exe si esta compilado, o la raiz del proyecto
 BASE_DIR = (
     Path(sys.executable).parent
     if getattr(sys, "frozen", False)
     else Path(__file__).resolve().parents[3]
+)
+
+# Carpeta de assets (favicon, iconos, etc.)
+# En modo compilado: sys._MEIPASS/assets (PyInstaller --add-data)
+# En modo desarrollo: generador-plano-psl/assets/
+ASSETS_DIR = (
+    Path(sys._MEIPASS) / "assets"           # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[3] / "assets"
 )
 
 

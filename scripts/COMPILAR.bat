@@ -68,6 +68,8 @@ echo.
 "%PYTHON%" -m PyInstaller ^
     --onefile --windowed ^
     --name "GeneradorArchivoPlano_PSL" ^
+    --icon "%~dp0..\assets\favicon.ico" ^
+    --add-data "%~dp0..\assets\favicon.ico;assets" ^
     --paths "%~dp0..\src" ^
     --collect-all pdfplumber ^
     --collect-all pdfminer ^
@@ -80,8 +82,12 @@ echo.
     --hidden-import generador_plano.lector ^
     --hidden-import generador_plano.constructor ^
     --hidden-import generador_plano.exportador ^
+    --hidden-import generador_plano.conciliacion ^
+    --hidden-import generador_plano.conciliacion.procesador ^
     --hidden-import generador_plano.ui.app ^
     --hidden-import generador_plano.ui.widgets ^
+    --hidden-import generador_plano.ui.tab_toledana ^
+    --hidden-import generador_plano.ui.tab_conciliacion ^
     --hidden-import pandas ^
     --hidden-import pandas._libs.tslibs.np_datetime ^
     --hidden-import pandas._libs.tslibs.nattype ^

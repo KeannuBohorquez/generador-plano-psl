@@ -22,6 +22,9 @@ def clasificar(desc: str) -> str:
     if "IMPTO GOBIERNO" in d:      return "GMF"
     if "TRASLADO FIDUCIARIA" in d: return "TRASLADO"
     if "RECAUDO" in d:             return "RECAUDO"
+    # Pagos directos de propietarios/desarrolladores sin la palabra RECAUDO
+    # Ej: "PAGO DE PROV ACRECER SAS", "PAGO DE PROV ..."
+    if "PAGO DE PROV" in d:        return "RECAUDO"
     return "OTRO"
 
 
