@@ -11,9 +11,11 @@ import traceback
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
-from ..conciliacion.procesador import procesar, ResultadoConciliacion
+from ..conciliacion.procesador import (
+    procesar, verificar_acceso, ResultadoConciliacion, PasswordError,
+)
 from .widgets import (
     FilePicker, LogRedirect,
     COLOR_BG, COLOR_PANEL, COLOR_BLUE, COLOR_ACCENT, COLOR_GREEN, COLOR_BORDER,
@@ -99,7 +101,7 @@ class TabConciliacion(tk.Frame):
         # ── Archivos de entrada ───────────────────────────────
         sf = self._section(body, "Archivos de entrada")
         self.pdf_picker = FilePicker(
-            sf, "1.  Extracto fiduciaria  (PDF — sin contrasena)",
+            sf, "1.  Extracto fiduciaria  (PDF)",
             [("PDF", "*.pdf"), ("Todos", "*.*")])
         self.pdf_picker.pack(fill="x", pady=(0, 10))
         self.clientes_picker = FilePicker(
@@ -113,6 +115,33 @@ class TabConciliacion(tk.Frame):
             so, "Guardar resultado como...",
             [("Excel 97-2003", "*.xls")], save=True, defaultextension=".xls")
         self.out_picker.pack(fill="x")
+
+        # ── Opciones ──────────────────────────────────────────
+        sop = self._section(body, "Opciones")
+        grid = tk.Frame(sop, bg=COLOR_PANEL)
+        grid.pack(fill="x")
+
+        tk.Label(grid, text="Contrasena (si alguno de los archivos la pide):",
+                 font=FONT_BOLD, bg=COLOR_PANEL, fg=COLOR_BLUE
+                 ).grid(row=0, column=0, sticky="w", pady=4)
+        self.pwd = tk.Entry(
+            grid, show="*", font=FONT_LABEL, width=24, relief="flat",
+            highlightthickness=1, highlightbackground=COLOR_BORDER, bg="#F8FAFC")
+        self.pwd.grid(row=0, column=1, sticky="w", padx=(8, 0), ipady=4)
+
+        self.show_pwd = tk.BooleanVar()
+        tk.Checkbutton(
+            grid, text="Mostrar contrasena", variable=self.show_pwd,
+            bg=COLOR_PANEL, font=FONT_LABEL, fg="#555",
+            activebackground=COLOR_PANEL, command=self._toggle_pwd,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        tk.Label(
+            grid,
+            text="(dejalo vacio si ningun archivo esta protegido; "
+                 "si hace falta, se pedira al presionar Generar)",
+            font=("Segoe UI", 8), fg="#888", bg=COLOR_PANEL,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         # ── Boton generar ─────────────────────────────────────
         bf = tk.Frame(body, bg=COLOR_BG)
@@ -167,6 +196,9 @@ class TabConciliacion(tk.Frame):
 
     # ── Helpers de UI ─────────────────────────────────────────
 
+    def _toggle_pwd(self) -> None:
+        self.pwd.config(show="" if self.show_pwd.get() else "*")
+
     def _set_defaults(self) -> None:
         import datetime
         hoy = datetime.date.today()
@@ -216,12 +248,63 @@ class TabConciliacion(tk.Frame):
             messagebox.showerror("Campos incompletos",
                                  "\n".join(f"  * {e}" for e in errores))
             return
+
+        # Verificar (en el hilo principal, para poder mostrar dialogos)
+        # si el PDF o el Excel de clientes necesitan contrasena antes
+        # de lanzar el procesamiento pesado en un hilo de fondo.
+        password = self._resolver_password()
+        if password is None:
+            return  # el usuario cancelo el dialogo de contrasena
+
         self.btn_gen.config(state="disabled", text="Procesando...")
         self._set_status("Procesando...", COLOR_ACCENT)
         self._log_clear()
-        threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._run, args=(password,), daemon=True).start()
 
-    def _run(self) -> None:
+    def _resolver_password(self) -> str | None:
+        """
+        Verifica si el PDF o el Excel de clientes requieren contrasena.
+        Si el campo esta vacio (o la contrasena dada no sirve) y algun
+        archivo la pide, la solicita con un dialogo. Se intenta hasta
+        3 veces antes de rendirse.
+
+        Returns:
+            La contrasena a usar (puede ser cadena vacia si ningun
+            archivo esta protegido), o None si el usuario cancelo el
+            dialogo o se agotaron los intentos.
+        """
+        ruta_pdf      = self.pdf_picker.get()
+        ruta_clientes = self.clientes_picker.get()
+        pwd = self.pwd.get().strip()
+
+        for _ in range(3):
+            try:
+                verificar_acceso(ruta_pdf, ruta_clientes, pwd)
+                return pwd
+            except PasswordError as ex:
+                nueva = simpledialog.askstring(
+                    "Contrasena requerida",
+                    f"{ex}\n\nIngresa la contrasena:",
+                    show="*", parent=self,
+                )
+                if nueva is None:
+                    return None  # el usuario cancelo
+                pwd = nueva.strip()
+                self.pwd.delete(0, "end")
+                self.pwd.insert(0, pwd)
+            except Exception:
+                # Otro tipo de error (archivo corrupto, ruta invalida, etc.)
+                # se deja pasar para que _run lo reporte con el detalle
+                # completo y el traceback en el log.
+                return pwd
+
+        messagebox.showerror(
+            "Contrasena incorrecta",
+            "No se pudo validar la contrasena despues de varios intentos.",
+        )
+        return None
+
+    def _run(self, password: str = "") -> None:
         mes_nombre, anio = self._mes_seleccionado()
         ruta_pdf      = self.pdf_picker.get()
         ruta_clientes = self.clientes_picker.get()
@@ -256,6 +339,7 @@ class TabConciliacion(tk.Frame):
                     mes_nombre=mes_nombre,
                     anio=anio,
                     ruta_salida=ruta_salida,
+                    password=password,
                 )
             except PermissionError:
                 L("\n  ERROR: No se pudo guardar el archivo.", "err")

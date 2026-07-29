@@ -8,13 +8,24 @@
 from __future__ import annotations
 
 import calendar
+import io
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import msoffcrypto
 import pandas as pd
 import pdfplumber
+from msoffcrypto.exceptions import InvalidKeyError
+from pdfminer.pdfdocument import PDFPasswordIncorrect
+
+
+class PasswordError(Exception):
+    """
+    Se lanza cuando un archivo (PDF o Excel) esta protegido con
+    contrasena y no se dio ninguna, o la que se dio es incorrecta.
+    """
 
 
 # ── Patrones regex ─────────────────────────────────────────────
@@ -183,20 +194,71 @@ def _buscar_hoja_clientes(ruta: str) -> str:
     Busca en el archivo Excel la hoja de clientes tolerando
     diferencias de mayusculas/espacios (p.ej. 'CONSOLIDADO ALIANZA ').
 
+    Args:
+        fuente: Ruta al archivo (str) o buffer ya desencriptado
+                (io.BytesIO), tal como lo retorna _abrir_fuente_excel().
+
     Raises:
         ValueError: Si no se encuentra ninguna hoja compatible.
     """
-    xls = pd.ExcelFile(ruta)
+    xls = pd.ExcelFile(fuente)
     for nombre in xls.sheet_names:
         if _normalizar_txt(nombre) == _HOJA_CLIENTES:
             return nombre
     raise ValueError(
-        f"No se encontro la hoja 'CONSOLIDADO ALIANZA' en '{ruta}'.\n"
+        f"No se encontro la hoja 'CONSOLIDADO ALIANZA'.\n"
         f"Hojas disponibles: {', '.join(xls.sheet_names)}"
     )
 
 
-def _leer_clientes(ruta: str) -> pd.DataFrame:
+def _abrir_fuente_excel(ruta: str, pwd: str = "") -> str | io.BytesIO:
+    """
+    Devuelve una fuente legible por pandas para el archivo de clientes:
+    la ruta original si no esta protegido, o un buffer ya desencriptado
+    si lo esta.
+
+    Args:
+        ruta: Ruta al archivo Excel de clientes/cartera.
+        pwd: Contrasena, si el archivo esta protegido.
+
+    Returns:
+        La misma ruta (str) si el archivo no esta protegido, o un
+        io.BytesIO con el contenido ya desencriptado.
+
+    Raises:
+        PasswordError: Si el archivo esta protegido y no se dio
+                       contrasena, o la contrasena es incorrecta.
+    """
+    try:
+        with open(ruta, "rb") as f:
+            of = msoffcrypto.OfficeFile(f)
+            if not of.is_encrypted():
+                return ruta
+            if not pwd:
+                raise PasswordError(
+                    f"El archivo de clientes requiere contrasena: "
+                    f"{Path(ruta).name}"
+                )
+            try:
+                of.load_key(password=pwd)
+                buf = io.BytesIO()
+                of.decrypt(buf)
+            except InvalidKeyError as ex:
+                raise PasswordError(
+                    f"La contrasena del archivo de clientes es "
+                    f"incorrecta: {Path(ruta).name}"
+                ) from ex
+            buf.seek(0)
+            return buf
+    except PasswordError:
+        raise
+    except Exception:
+        # msoffcrypto no pudo interpretar el archivo (no es OLE / no
+        # esta encriptado de forma estandar) -> se asume legible directo
+        return ruta
+
+
+def _leer_clientes(ruta: str, pwd: str = "") -> pd.DataFrame:
     """
     Lee el archivo de clientes en su formato base (el mismo que se
     usa en la hoja 'CONSOLIDADO ALIANZA' del archivo de cartera,
@@ -205,10 +267,12 @@ def _leer_clientes(ruta: str) -> pd.DataFrame:
 
     Tolera variaciones de mayusculas/espacios tanto en el nombre de
     la hoja como en los encabezados de columna (p.ej. 'ENCARGO ',
-    'IDENTIFICACIÓN', 'CLIENTE').
+    'IDENTIFICACIÓN', 'CLIENTE'), y soporta archivos protegidos con
+    contrasena.
 
     Args:
         ruta: Ruta al archivo Excel de clientes/cartera.
+        pwd: Contrasena del archivo, si esta protegido.
 
     Returns:
         DataFrame con columnas 'Numero de Encargo' (texto, sin
@@ -217,9 +281,14 @@ def _leer_clientes(ruta: str) -> pd.DataFrame:
 
     Raises:
         ValueError: Si no se encuentra la hoja o la columna de encargo.
+        PasswordError: Si el archivo esta protegido y no se dio
+                       contrasena, o la contrasena es incorrecta.
     """
-    hoja = _buscar_hoja_clientes(ruta)
-    df = pd.read_excel(ruta, sheet_name=hoja)
+    fuente = _abrir_fuente_excel(ruta, pwd)
+    hoja = _buscar_hoja_clientes(fuente)
+    if hasattr(fuente, "seek"):
+        fuente.seek(0)
+    df = pd.read_excel(fuente, sheet_name=hoja)
 
     # Mapear columnas reales -> nombres normalizados
     col_encargo = col_ident = col_cliente = None
@@ -262,23 +331,53 @@ def _leer_clientes(ruta: str) -> pd.DataFrame:
 
 # ── Lectura del PDF ───────────────────────────────────────────
 
-def parsear_pdf(ruta: str) -> str:
+def parsear_pdf(ruta: str, password: str = "") -> str:
     """
-    Extrae todo el texto del PDF del extracto fiduciario (sin contrasena).
+    Extrae todo el texto del PDF del extracto fiduciario. Soporta
+    PDFs protegidos con contrasena (la mayoria no lo estan, pero
+    algunos extractos si vienen protegidos).
 
     Args:
         ruta: Ruta al archivo PDF.
+        password: Contrasena del PDF, si aplica. Cadena vacia si
+                  el PDF no esta protegido.
 
     Returns:
         Texto completo del PDF como una sola cadena.
+
+    Raises:
+        PasswordError: Si el PDF esta protegido y no se dio
+                       contrasena, o la contrasena es incorrecta.
     """
     texto = ""
-    with pdfplumber.open(ruta) as pdf:
-        for pagina in pdf.pages:
-            t = pagina.extract_text()
-            if t:
-                texto += t + "\n"
+    try:
+        with pdfplumber.open(ruta, password=password or "") as pdf:
+            for pagina in pdf.pages:
+                t = pagina.extract_text()
+                if t:
+                    texto += t + "\n"
+    except Exception as ex:
+        if _es_password_incorrecta_pdf(ex):
+            raise PasswordError(
+                f"El extracto PDF requiere contrasena o la contrasena "
+                f"es incorrecta: {Path(ruta).name}"
+            ) from ex
+        raise
     return texto
+
+
+def _es_password_incorrecta_pdf(ex: Exception) -> bool:
+    """Detecta si una excepcion de pdfplumber/pdfminer es por contrasena."""
+    if isinstance(ex, PDFPasswordIncorrect):
+        return True
+    # pdfplumber envuelve la excepcion original de pdfminer en
+    # PdfminerException, guardandola en args[0] y/o __context__.
+    origen = ex.args[0] if ex.args else None
+    if isinstance(origen, PDFPasswordIncorrect):
+        return True
+    if isinstance(getattr(ex, "__context__", None), PDFPasswordIncorrect):
+        return True
+    return False
 
 
 # ── Deteccion de proyecto ─────────────────────────────────────
@@ -419,6 +518,43 @@ def _op_cuenta(desc: str, valor: float) -> tuple[str, str]:
     return ("", "Revisar")
 
 
+# ── Verificacion previa de contrasenas ─────────────────────────
+
+def verificar_acceso(ruta_pdf: str, ruta_clientes: str, password: str = "") -> None:
+    """
+    Verifica que se puedan abrir el PDF y el Excel de clientes con
+    la contrasena dada, sin procesar todo el contenido. Pensado para
+    validar en la UI (hilo principal) ANTES de lanzar el procesamiento
+    pesado en un hilo de fondo, para poder pedir la contrasena con un
+    dialogo si hace falta.
+
+    Args:
+        ruta_pdf:      Ruta al PDF del extracto.
+        ruta_clientes: Ruta al Excel de clientes/cartera.
+        password:      Contrasena a probar en ambos archivos (puede
+                        ser vacia si ninguno esta protegido).
+
+    Raises:
+        PasswordError: Si alguno de los dos archivos esta protegido
+                       y la contrasena dada esta vacia o es incorrecta.
+    """
+    # PDF: abrir y tocar la primera pagina es suficiente para que
+    # pdfminer valide la contrasena (no hace falta extraer texto).
+    try:
+        with pdfplumber.open(ruta_pdf, password=password or "") as pdf:
+            _ = pdf.pages[0] if pdf.pages else None
+    except Exception as ex:
+        if _es_password_incorrecta_pdf(ex):
+            raise PasswordError(
+                f"El extracto PDF requiere contrasena o la contrasena "
+                f"es incorrecta: {Path(ruta_pdf).name}"
+            ) from ex
+        raise
+
+    # Excel de clientes: _abrir_fuente_excel ya valida la contrasena.
+    _abrir_fuente_excel(ruta_clientes, password)
+
+
 # ── Punto de entrada principal ────────────────────────────────
 
 def procesar(
@@ -427,13 +563,14 @@ def procesar(
     mes_nombre:     str,
     anio:           str,
     ruta_salida:    str,
+    password:       str = "",
 ) -> ResultadoConciliacion:
     """
     Procesa el extracto PDF de la fiduciaria y genera el archivo
     plano de conciliacion en formato Excel de 20 columnas.
 
     Args:
-        ruta_pdf:      Ruta al PDF del extracto (sin contrasena).
+        ruta_pdf:      Ruta al PDF del extracto.
         ruta_clientes: Ruta al Excel de clientes/cartera. Acepta el
                        formato base (p.ej. 'Cartera_BOSKE APTOS_...xlsx')
                        con la hoja 'CONSOLIDADO ALIANZA' (tolerante a
@@ -442,13 +579,19 @@ def procesar(
         mes_nombre:    Nombre del mes en espanol, p.ej. 'MAYO'.
         anio:          Ano como string, p.ej. '2026'.
         ruta_salida:   Ruta donde guardar el archivo resultado (.xls).
+        password:      Contrasena compartida para el PDF y/o el Excel
+                       de clientes, si alguno esta protegido. Cadena
+                       vacia si ninguno lo esta.
 
     Returns:
         ResultadoConciliacion con el DataFrame generado y metadatos.
 
     Raises:
-        ValueError: Si no se puede leer el PDF, o si el Excel de
-                    clientes no tiene la hoja/columna de encargo.
+        ValueError:    Si no se puede leer el PDF, o si el Excel de
+                       clientes no tiene la hoja/columna de encargo.
+        PasswordError: Si el PDF o el Excel de clientes estan
+                       protegidos y la contrasena esta vacia o es
+                       incorrecta.
     """
     mes_up = mes_nombre.strip().upper()
     period = _MES_NUM.get(mes_up, "00")
@@ -463,7 +606,7 @@ def procesar(
     fecha_fmt  = datetime.strptime(fecha_str, "%Y-%m-%d").strftime("%d/%m/%Y")
 
     # 1. Leer PDF
-    texto = parsear_pdf(ruta_pdf)
+    texto = parsear_pdf(ruta_pdf, password)
     if not texto.strip():
         raise ValueError("El PDF no contiene texto extraible.")
 
@@ -475,7 +618,7 @@ def procesar(
 
     # 4. Cruzar con clientes (formato base ALIANZA, tolerante a
     #    variaciones de mayusculas/espacios en hoja y columnas)
-    df_clientes = _leer_clientes(ruta_clientes)
+    df_clientes = _leer_clientes(ruta_clientes, password)
 
     df_trans["Numero de Encargo"] = df_trans["Numero de Encargo"].astype(str)
     # df_clientes["Numero de Encargo"] ya viene normalizado por _leer_clientes
