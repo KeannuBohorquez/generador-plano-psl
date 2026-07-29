@@ -111,7 +111,7 @@ class TabConciliacion(tk.Frame):
         so = self._section(body, "Archivo de salida")
         self.out_picker = FilePicker(
             so, "Guardar resultado como...",
-            [("Excel", "*.xlsx")], save=True)
+            [("Excel 97-2003", "*.xls")], save=True, defaultextension=".xls")
         self.out_picker.pack(fill="x")
 
         # ── Boton generar ─────────────────────────────────────

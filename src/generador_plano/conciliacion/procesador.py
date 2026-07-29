@@ -153,6 +153,113 @@ def _id_a_texto(v) -> str:
     return str(v).strip()
 
 
+def _normalizar_txt(s: str) -> str:
+    """
+    Normaliza un texto para comparaciones tolerantes:
+    mayusculas, sin acentos, espacios internos colapsados y
+    sin espacios al inicio/fin.
+    """
+    s = str(s).strip().upper()
+    for a, b in (
+        ("Á", "A"), ("É", "E"), ("Í", "I"), ("Ó", "O"), ("Ú", "U"), ("Ñ", "N"),
+    ):
+        s = s.replace(a, b)
+    return re.sub(r"\s+", " ", s)
+
+
+# ── Lectura del archivo de clientes (formato base ALIANZA) ────
+
+# Nombre esperado de la hoja de clientes (tolerante a espacios/mayus)
+_HOJA_CLIENTES = "CONSOLIDADO ALIANZA"
+
+# Alias aceptados para cada columna estandar (normalizados)
+_ALIAS_ENCARGO = {"ENCARGO", "NUMERO DE ENCARGO", "N ENCARGO", "NO ENCARGO"}
+_ALIAS_IDENT   = {"IDENTIFICACION", "IDENTIFICACION CLIENTE", "NIT", "CEDULA"}
+_ALIAS_CLIENTE = {"CLIENTE", "NOMBRE CLIENTE", "NOMBRE"}
+
+
+def _buscar_hoja_clientes(ruta: str) -> str:
+    """
+    Busca en el archivo Excel la hoja de clientes tolerando
+    diferencias de mayusculas/espacios (p.ej. 'CONSOLIDADO ALIANZA ').
+
+    Raises:
+        ValueError: Si no se encuentra ninguna hoja compatible.
+    """
+    xls = pd.ExcelFile(ruta)
+    for nombre in xls.sheet_names:
+        if _normalizar_txt(nombre) == _HOJA_CLIENTES:
+            return nombre
+    raise ValueError(
+        f"No se encontro la hoja 'CONSOLIDADO ALIANZA' en '{ruta}'.\n"
+        f"Hojas disponibles: {', '.join(xls.sheet_names)}"
+    )
+
+
+def _leer_clientes(ruta: str) -> pd.DataFrame:
+    """
+    Lee el archivo de clientes en su formato base (el mismo que se
+    usa en la hoja 'CONSOLIDADO ALIANZA' del archivo de cartera,
+    p.ej. 'Cartera_BOSKE APTOS_Mayo 31_2026.xlsx') y normaliza sus
+    columnas a: 'Numero de Encargo', 'Identificación', 'Cliente'.
+
+    Tolera variaciones de mayusculas/espacios tanto en el nombre de
+    la hoja como en los encabezados de columna (p.ej. 'ENCARGO ',
+    'IDENTIFICACIÓN', 'CLIENTE').
+
+    Args:
+        ruta: Ruta al archivo Excel de clientes/cartera.
+
+    Returns:
+        DataFrame con columnas 'Numero de Encargo' (texto, sin
+        decimales), 'Identificación' y 'Cliente'. Las filas sin
+        numero de encargo se descartan.
+
+    Raises:
+        ValueError: Si no se encuentra la hoja o la columna de encargo.
+    """
+    hoja = _buscar_hoja_clientes(ruta)
+    df = pd.read_excel(ruta, sheet_name=hoja)
+
+    # Mapear columnas reales -> nombres normalizados
+    col_encargo = col_ident = col_cliente = None
+    for col in df.columns:
+        norm = _normalizar_txt(col)
+        if col_encargo is None and norm in _ALIAS_ENCARGO:
+            col_encargo = col
+        elif col_ident is None and norm in _ALIAS_IDENT:
+            col_ident = col
+        elif col_cliente is None and norm in _ALIAS_CLIENTE:
+            col_cliente = col
+
+    if col_encargo is None:
+        raise ValueError(
+            f"No se encontro la columna 'Encargo' en la hoja '{hoja}'.\n"
+            f"Columnas disponibles: {', '.join(str(c) for c in df.columns)}"
+        )
+
+    renombres = {col_encargo: "Numero de Encargo"}
+    if col_ident is not None:
+        renombres[col_ident] = "Identificación"
+    if col_cliente is not None:
+        renombres[col_cliente] = "Cliente"
+    df = df.rename(columns=renombres)
+
+    if "Identificación" not in df.columns:
+        df["Identificación"] = ""
+    if "Cliente" not in df.columns:
+        df["Cliente"] = ""
+
+    # Descartar filas sin numero de encargo (filas vacias al final)
+    df = df[df["Numero de Encargo"].notna()].copy()
+
+    # Normalizar encargo e identificacion a texto limpio (sin '.0')
+    df["Numero de Encargo"] = df["Numero de Encargo"].map(_id_a_texto)
+    df["Identificación"]    = df["Identificación"].map(_id_a_texto)
+
+    return df[["Numero de Encargo", "Identificación", "Cliente"]]
+
+
 # ── Lectura del PDF ───────────────────────────────────────────
 
 def parsear_pdf(ruta: str) -> str:
@@ -327,17 +434,21 @@ def procesar(
 
     Args:
         ruta_pdf:      Ruta al PDF del extracto (sin contrasena).
-        ruta_clientes: Ruta al Excel de clientes (hoja 'CONSOLIDADO ALIANZA').
+        ruta_clientes: Ruta al Excel de clientes/cartera. Acepta el
+                       formato base (p.ej. 'Cartera_BOSKE APTOS_...xlsx')
+                       con la hoja 'CONSOLIDADO ALIANZA' (tolerante a
+                       espacios/mayusculas en hoja y columnas: 'ENCARGO ',
+                       'IDENTIFICACIÓN', 'CLIENTE', etc.).
         mes_nombre:    Nombre del mes en espanol, p.ej. 'MAYO'.
         anio:          Ano como string, p.ej. '2026'.
-        ruta_salida:   Ruta donde guardar el archivo Excel resultado.
+        ruta_salida:   Ruta donde guardar el archivo resultado (.xls).
 
     Returns:
         ResultadoConciliacion con el DataFrame generado y metadatos.
 
     Raises:
-        ValueError:   Si no se puede leer el PDF o los archivos Excel.
-        KeyError:     Si la hoja 'CONSOLIDADO ALIANZA' no existe en clientes.xlsx.
+        ValueError: Si no se puede leer el PDF, o si el Excel de
+                    clientes no tiene la hoja/columna de encargo.
     """
     mes_up = mes_nombre.strip().upper()
     period = _MES_NUM.get(mes_up, "00")
@@ -362,12 +473,12 @@ def procesar(
     # 3. Extraer transacciones
     df_trans = _aplicar_patrones(texto, mes_nombre.strip().capitalize(), anio)
 
-    # 4. Cruzar con clientes
-    df_clientes = pd.read_excel(ruta_clientes, sheet_name="CONSOLIDADO ALIANZA")
-    df_clientes.rename(columns={"Encargo": "Numero de Encargo"}, inplace=True)
+    # 4. Cruzar con clientes (formato base ALIANZA, tolerante a
+    #    variaciones de mayusculas/espacios en hoja y columnas)
+    df_clientes = _leer_clientes(ruta_clientes)
 
-    df_trans["Numero de Encargo"]    = df_trans["Numero de Encargo"].astype(str)
-    df_clientes["Numero de Encargo"] = df_clientes["Numero de Encargo"].astype(str)
+    df_trans["Numero de Encargo"] = df_trans["Numero de Encargo"].astype(str)
+    # df_clientes["Numero de Encargo"] ya viene normalizado por _leer_clientes
 
     df_cx = pd.merge(df_trans, df_clientes, on="Numero de Encargo", how="left")
 
@@ -419,8 +530,14 @@ def procesar(
         df_plano.loc[mask, "Tercero"] = _NIT_BANCOLOMBIA
     df_plano.loc[df_plano["cod cuenta"] == "421006", "Tercero"] = _NIT_BANCOLOMBIA
 
-    # 8. Guardar
-    df_plano.to_excel(ruta_salida, index=False)
+    # 8. Guardar en formato .xls (Excel 97-2003), con los mismos
+    #    formatos de columna (texto/numero/general) que usa Toledana
+    from ..exportador import exportar_plano_xls
+    exportar_plano_xls(
+        headers=df_plano.columns.tolist(),
+        filas=df_plano.values.tolist(),
+        ruta_salida=ruta_salida,
+    )
 
     return ResultadoConciliacion(
         df=df_plano,

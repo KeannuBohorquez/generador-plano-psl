@@ -76,6 +76,7 @@ echo.
     --collect-all msoffcrypto ^
     --collect-all openpyxl ^
     --collect-all xlrd ^
+    --collect-all xlwt ^
     --hidden-import generador_plano ^
     --hidden-import generador_plano.config ^
     --hidden-import generador_plano.extractor ^

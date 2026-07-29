@@ -57,10 +57,14 @@ class LogRedirect:
 class FilePicker(tk.Frame):
     """Widget de seleccion de archivo con etiqueta y boton Examinar."""
 
-    def __init__(self, parent, label: str, filetypes: list, save: bool = False, **kw):
+    def __init__(
+        self, parent, label: str, filetypes: list, save: bool = False,
+        defaultextension: str = ".xls", **kw,
+    ):
         super().__init__(parent, bg=COLOR_PANEL, **kw)
         self.save = save
         self.filetypes = filetypes
+        self.defaultextension = defaultextension
 
         tk.Label(
             self, text=label, font=FONT_BOLD, bg=COLOR_PANEL,
@@ -85,7 +89,7 @@ class FilePicker(tk.Frame):
 
     def _browse(self) -> None:
         kw = dict(
-            defaultextension=".xlsx",
+            defaultextension=self.defaultextension,
             filetypes=self.filetypes,
             initialdir=str(BASE_DIR),
         )

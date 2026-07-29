@@ -3,6 +3,7 @@
 
 pdfplumber>=0.10.0       # Lectura de PDFs bancarios
 msoffcrypto-tool>=5.0.0  # Desencriptado de Excel protegidos
-openpyxl>=3.1.0          # Lectura/escritura de .xlsx
+openpyxl>=3.1.0          # Lectura de .xlsx de entrada
 xlrd>=2.0.1              # Lectura de .xls (formato antiguo)
+xlwt>=1.3.0              # Escritura de .xls (todos los archivos generados)
 pandas>=2.0.0            # Manipulacion de datos tabulares
