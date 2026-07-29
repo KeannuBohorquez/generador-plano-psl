@@ -11,6 +11,7 @@ set PYTHON=
 set SCRIPT=%~dp0..\main.py
 set OUTDIR=%~dp0..\dist
 set BUILDDIR=%~dp0..\build_tmp
+set VENVDIR=%~dp0..\build_venv
 
 echo Buscando Python...
 
@@ -56,16 +57,39 @@ echo.
 pause
 echo.
 
-echo [1/3] Instalando dependencias y PyInstaller...
-"%PYTHON%" -m pip install -r "%~dp0..\requirements.txt" --quiet --exists-action i
-"%PYTHON%" -m pip install pyinstaller --quiet --exists-action i
-echo [OK] Dependencias listas.
+echo [1/4] Preparando entorno virtual limpio (build_venv)...
+echo.
+echo   Se usa un venv dedicado SOLO con las librerias de este
+echo   proyecto, para que el .exe no incluya paquetes de otros
+echo   proyectos que tengas instalados en tu Python global
+echo   (matplotlib, jupyter, opencv, etc. si los tienes).
 echo.
 
-echo [2/3] Compilando .exe (tarda 2-4 minutos)...
+if not exist "%VENVDIR%\Scripts\python.exe" (
+    echo   Creando entorno virtual nuevo...
+    "%PYTHON%" -m venv "%VENVDIR%"
+    if errorlevel 1 (
+        echo [ERROR] No se pudo crear el entorno virtual.
+        pause & exit /b 1
+    )
+) else (
+    echo   Reutilizando entorno virtual existente.
+)
+
+set VENVPY=%VENVDIR%\Scripts\python.exe
+
+echo.
+echo [2/4] Instalando dependencias dentro del venv...
+"%VENVPY%" -m pip install --upgrade pip --quiet
+"%VENVPY%" -m pip install -r "%~dp0..\requirements.txt" --quiet
+"%VENVPY%" -m pip install pyinstaller --quiet
+echo [OK] Dependencias listas (aisladas del Python global).
 echo.
 
-"%PYTHON%" -m PyInstaller ^
+echo [3/4] Compilando .exe (tarda 2-4 minutos)...
+echo.
+
+"%VENVPY%" -m PyInstaller ^
     --onefile --windowed ^
     --name "GeneradorArchivoPlano_PSL" ^
     --icon "%~dp0..\assets\favicon.ico" ^
@@ -96,6 +120,22 @@ echo.
     --hidden-import cffi ^
     --hidden-import cryptography ^
     --hidden-import charset_normalizer ^
+    --exclude-module matplotlib ^
+    --exclude-module scipy ^
+    --exclude-module sympy ^
+    --exclude-module IPython ^
+    --exclude-module jupyter ^
+    --exclude-module notebook ^
+    --exclude-module PyQt5 ^
+    --exclude-module PySide2 ^
+    --exclude-module PySide6 ^
+    --exclude-module cv2 ^
+    --exclude-module tensorflow ^
+    --exclude-module torch ^
+    --exclude-module pytest ^
+    --exclude-module numpy.f2py ^
+    --exclude-module tkinter.test ^
+    --exclude-module unittest ^
     --distpath "%OUTDIR%" ^
     --workpath "%BUILDDIR%" ^
     --specpath "%BUILDDIR%" ^
@@ -111,7 +151,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Limpiando archivos temporales...
+echo [4/4] Limpiando archivos temporales...
 rmdir /s /q "%BUILDDIR%" 2>nul
 
 echo.
@@ -120,6 +160,12 @@ echo   COMPILACION EXITOSA
 echo ============================================================
 echo.
 echo   Ejecutable: %OUTDIR%\GeneradorArchivoPlano_PSL.exe
+echo.
+for %%A in ("%OUTDIR%\GeneradorArchivoPlano_PSL.exe") do echo   Tamano: %%~zA bytes
+echo.
+echo   TIP: Si sigue pesando mucho, instala UPX (upx.github.io),
+echo   descomprimelo y agrega la carpeta a tu PATH. PyInstaller lo
+echo   detecta automaticamente y comprime el .exe bastante mas.
 echo.
 echo   RECUERDA: Vuelve a activar Avira si lo desactivaste.
 echo.

@@ -17,6 +17,7 @@ build_tmp/
 venv/
 env/
 .env
+build_venv/
 
 # ── PyInstaller ───────────────────────────────────────────────
 *.spec
