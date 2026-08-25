@@ -189,7 +189,7 @@ _ALIAS_IDENT   = {"IDENTIFICACION", "IDENTIFICACION CLIENTE", "NIT", "CEDULA"}
 _ALIAS_CLIENTE = {"CLIENTE", "NOMBRE CLIENTE", "NOMBRE"}
 
 
-def _buscar_hoja_clientes(ruta: str) -> str:
+def _buscar_hoja_clientes(fuente: str | io.BytesIO) -> str:
     """
     Busca en el archivo Excel la hoja de clientes tolerando
     diferencias de mayusculas/espacios (p.ej. 'CONSOLIDADO ALIANZA ').
